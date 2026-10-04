@@ -1,5 +1,9 @@
 import re
 
+from src.metadata.semantic_registry import (
+    get_semantic_registry
+)
+
 
 METRIC_PATTERNS = {
     "Revenue": [
@@ -165,22 +169,85 @@ def detect_intent(question_lower):
         "per customer"
     ]
 
-    if any(pattern in question_lower for pattern in root_cause_patterns):
+    if any(
+        pattern in question_lower
+        for pattern in root_cause_patterns
+    ):
         return "root_cause"
 
-    if any(pattern in question_lower for pattern in comparison_patterns):
+    if any(
+        pattern in question_lower
+        for pattern in comparison_patterns
+    ):
         return "comparison"
 
-    if any(pattern in question_lower for pattern in ranking_patterns):
+    if any(
+        pattern in question_lower
+        for pattern in ranking_patterns
+    ):
         return "ranking"
 
-    if any(pattern in question_lower for pattern in trend_patterns):
+    if any(
+        pattern in question_lower
+        for pattern in trend_patterns
+    ):
         return "trend_analysis"
 
-    if any(pattern in question_lower for pattern in statistical_patterns):
+    if any(
+        pattern in question_lower
+        for pattern in statistical_patterns
+    ):
         return "statistical"
 
-    if any(pattern in question_lower for pattern in aggregation_patterns):
+    if any(
+        pattern in question_lower
+        for pattern in aggregation_patterns
+    ):
+        return "aggregation"
+
+    return "unknown"
+
+
+def detect_analysis_type(intent, metrics):
+    """
+    Determine the broad analytical type represented by
+    the question.
+    """
+
+    if intent == "root_cause" and metrics:
+        return "metric_root_cause"
+
+    if intent == "comparison" and metrics:
+        return "metric_comparison"
+
+    if intent == "ranking" and metrics:
+        return "metric_ranking"
+
+    if intent == "trend_analysis" and metrics:
+        return "metric_trend"
+
+    if intent == "statistical" and metrics:
+        return "metric_statistics"
+
+    if intent == "aggregation" and metrics:
+        return "metric_aggregation"
+
+    if intent == "root_cause":
+        return "root_cause"
+
+    if intent == "comparison":
+        return "comparison"
+
+    if intent == "ranking":
+        return "ranking"
+
+    if intent == "trend_analysis":
+        return "trend"
+
+    if intent == "statistical":
+        return "statistics"
+
+    if intent == "aggregation":
         return "aggregation"
 
     return "unknown"
@@ -188,30 +255,68 @@ def detect_intent(question_lower):
 
 def detect_metrics(question_lower):
     """
-    Detect business metrics mentioned in the question.
+    Detect candidate metrics using natural-language patterns
+    and resolve them against the active dataset metadata.
     """
 
-    metrics = []
+    semantic_registry = get_semantic_registry()
 
-    for metric, patterns in METRIC_PATTERNS.items():
-        if any(pattern in question_lower for pattern in patterns):
-            metrics.append(metric)
+    detected_metrics = []
 
-    return metrics
+    for canonical_metric, patterns in METRIC_PATTERNS.items():
+
+        matched = any(
+            pattern in question_lower
+            for pattern in patterns
+        )
+
+        if not matched:
+            continue
+
+        resolved_metric = semantic_registry.resolve_metric(
+            candidate=canonical_metric
+        )
+
+        if resolved_metric:
+            detected_metrics.append(
+                resolved_metric
+            )
+
+    return detected_metrics
 
 
 def detect_dimensions(question_lower):
     """
-    Detect analytical dimensions mentioned in the question.
+    Detect candidate dimensions using natural-language
+    patterns and resolve them against active metadata.
     """
 
-    dimensions = []
+    semantic_registry = get_semantic_registry()
 
-    for dimension, patterns in DIMENSION_PATTERNS.items():
-        if any(pattern in question_lower for pattern in patterns):
-            dimensions.append(dimension)
+    detected_dimensions = []
 
-    return dimensions
+    for canonical_dimension, patterns in DIMENSION_PATTERNS.items():
+
+        matched = any(
+            pattern in question_lower
+            for pattern in patterns
+        )
+
+        if not matched:
+            continue
+
+        resolved_dimension = (
+            semantic_registry.resolve_dimension(
+                candidate=canonical_dimension
+            )
+        )
+
+        if resolved_dimension:
+            detected_dimensions.append(
+                resolved_dimension
+            )
+
+    return detected_dimensions
 
 
 def detect_time_period(question):
@@ -231,22 +336,50 @@ def analyze_question(question):
     """
     Convert a natural-language business question into
     a structured analytical representation.
+
+    The analyzer combines:
+
+        Natural-language pattern matching
+                    +
+        Semantic Registry
+                    +
+        Active dataset metadata
     """
 
     question = question.strip()
 
     if not question:
-        raise ValueError("Question cannot be empty.")
+        raise ValueError(
+            "Question cannot be empty."
+        )
 
     question_lower = question.lower()
 
-    result = {
+    intent = detect_intent(
+        question_lower
+    )
+
+    metrics = detect_metrics(
+        question_lower
+    )
+
+    dimensions = detect_dimensions(
+        question_lower
+    )
+
+    analysis_type = detect_analysis_type(
+        intent=intent,
+        metrics=metrics
+    )
+
+    return {
         "original_question": question,
-        "intent": detect_intent(question_lower),
-        "time_period": detect_time_period(question),
-        "metrics": detect_metrics(question_lower),
-        "dimensions": detect_dimensions(question_lower),
+        "intent": intent,
+        "analysis_type": analysis_type,
+        "time_period": detect_time_period(
+            question
+        ),
+        "metrics": metrics,
+        "dimensions": dimensions,
         "filters": []
     }
-
-    return result

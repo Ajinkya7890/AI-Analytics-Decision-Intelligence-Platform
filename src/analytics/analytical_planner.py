@@ -1,247 +1,246 @@
 from src.ai.question_analyzer import analyze_question
+from src.metadata.metric_resolver import get_metric_resolver
+from src.metadata.dimension_registry import get_dimension_registry
 
 
-METRIC_TABLE_MAP = {
-    "Revenue": {
-        "default": "analytics.daily_sales",
-        "Product": "analytics.product_metrics",
-        "Seller": "analytics.seller_metrics",
-        "Customer": "analytics.customer_metrics"
-    },
-
-    "Freight Revenue": {
-        "default": "analytics.daily_sales",
-        "Product": "analytics.product_metrics",
-        "Seller": "analytics.seller_metrics",
-        "Customer": "analytics.customer_metrics"
-    },
-
-    "Total Order Value": {
-        "default": "analytics.daily_sales",
-        "Product": "analytics.product_metrics",
-        "Seller": "analytics.seller_metrics",
-        "Customer": "analytics.customer_metrics"
-    },
-
-    "Order Count": {
-        "default": "analytics.daily_sales",
-        "Product": "analytics.product_metrics",
-        "Seller": "analytics.seller_metrics",
-        "Customer": "analytics.customer_metrics"
-    },
-
-    "Item Count": {
-        "default": "analytics.daily_sales",
-        "Product": "analytics.product_metrics",
-        "Seller": "analytics.seller_metrics"
-    },
-
-    "Average Order Value": {
-        "default": "analytics.daily_sales",
-        "Customer": "analytics.customer_metrics"
-    },
-
-    "Average Review Score": {
-        "default": "analytics.review_metrics"
-    },
-
-    "Average Delivery Days": {
-        "default": "analytics.delivery_metrics"
-    }
-}
-
-
-DIMENSION_GROUPING_MAP = {
-    "Product": "product",
-    "Seller": "seller",
-    "Customer": "customer",
-    "Month": "month",
-    "Year": "year"
-}
-
-
-def select_source_tables(metrics, dimensions):
+class AnalyticalPlanner:
     """
-    Select the most appropriate analytics table for
-    each requested metric and dimension.
+    Builds an analytical execution plan from a natural-language
+    question.
+
+    Metrics and dimensions are resolved through the metadata
+    layer instead of being hardcoded inside the planner.
     """
 
-    source_tables = []
+    def __init__(self):
+        self.metric_resolver = get_metric_resolver()
+        self.dimension_registry = get_dimension_registry()
 
-    for metric in metrics:
+    def select_source_tables(
+        self,
+        metrics,
+        dimensions
+    ):
+        """
+        Resolve the physical source tables required by the
+        requested metrics and dimensions.
+        """
 
-        mapping = METRIC_TABLE_MAP.get(metric)
+        source_tables = []
 
-        if not mapping:
-            continue
+        # Resolve metric sources.
+        for metric in metrics:
 
-        selected_table = mapping.get("default")
+            resolved_metric = (
+                self.metric_resolver.get_metric(
+                    metric
+                )
+            )
+
+            if not resolved_metric:
+                continue
+
+            for table_name in (
+                resolved_metric["source_tables"]
+            ):
+
+                if table_name not in source_tables:
+                    source_tables.append(
+                        table_name
+                    )
+
+        # Resolve dimension sources.
+        for dimension in dimensions:
+
+            dimension_sources = (
+                self.dimension_registry.get_source_tables(
+                    dimension
+                )
+            )
+
+            for table_name in dimension_sources:
+
+                if table_name not in source_tables:
+                    source_tables.append(
+                        table_name
+                    )
+
+        return source_tables
+
+    def determine_operations(self, intent):
+        """
+        Determine analytical operations from the detected
+        analytical intent.
+        """
+
+        operation_map = {
+            "trend_analysis": [
+                "time_series_aggregation"
+            ],
+            "ranking": [
+                "aggregation",
+                "ranking"
+            ],
+            "comparison": [
+                "group_comparison"
+            ],
+            "aggregation": [
+                "aggregation"
+            ],
+            "statistical": [
+                "statistical_summary"
+            ],
+            "root_cause": [
+                "root_cause_analysis"
+            ],
+            "unknown": [
+                "general_analysis"
+            ]
+        }
+
+        return operation_map.get(
+            intent,
+            ["general_analysis"]
+        )
+
+    def determine_group_by(self, dimensions):
+        """
+        Resolve semantic dimensions to their canonical names.
+
+        The physical source columns remain in metadata and are
+        resolved later by downstream SQL generation.
+        """
+
+        group_by = []
 
         for dimension in dimensions:
 
-            if dimension in mapping:
-                selected_table = mapping[dimension]
-                break
+            if not self.dimension_registry.has_dimension(
+                dimension
+            ):
+                continue
 
-        if selected_table not in source_tables:
-            source_tables.append(selected_table)
+            if dimension not in group_by:
+                group_by.append(
+                    dimension
+                )
 
-    return source_tables
+        return group_by
 
+    def determine_time_granularity(
+        self,
+        dimensions,
+        intent
+    ):
+        """
+        Determine the requested time granularity using the
+        registered temporal dimensions.
+        """
 
-def determine_operations(intent):
-    """
-    Map analytical intent to one or more analytical operations.
-    """
+        if (
+            "Month" in dimensions
+            and self.dimension_registry.has_dimension(
+                "Month"
+            )
+        ):
+            return "month"
 
-    operation_map = {
-        "trend_analysis": [
-            "time_series_aggregation"
-        ],
+        if (
+            "Year" in dimensions
+            and self.dimension_registry.has_dimension(
+                "Year"
+            )
+        ):
+            return "year"
 
-        "ranking": [
-            "aggregation",
-            "ranking"
-        ],
+        if intent == "trend_analysis":
+            return "time"
 
-        "comparison": [
-            "group_comparison"
-        ],
+        return None
 
-        "aggregation": [
-            "aggregation"
-        ],
+    @staticmethod
+    def determine_sorting(intent):
+        """
+        Determine sorting requirements for the analytical
+        operation.
+        """
 
-        "statistical": [
-            "statistical_summary"
-        ],
+        if intent == "ranking":
+            return {
+                "direction": "DESC",
+                "limit": 10
+            }
 
-        "root_cause": [
-            "root_cause_analysis"
-        ],
+        if intent == "trend_analysis":
+            return {
+                "direction": "ASC",
+                "limit": None
+            }
 
-        "unknown": [
-            "general_analysis"
-        ]
-    }
+        return None
 
-    return operation_map.get(
-        intent,
-        ["general_analysis"]
-    )
+    def create_plan(self, question):
+        """
+        Create an analytical execution plan from a natural-
+        language question.
+        """
 
-
-def determine_group_by(dimensions):
-    """
-    Convert detected dimensions into generic grouping instructions.
-    """
-
-    group_by = []
-
-    for dimension in dimensions:
-
-        field = DIMENSION_GROUPING_MAP.get(
-            dimension
+        analysis = analyze_question(
+            question
         )
 
-        if field and field not in group_by:
-            group_by.append(field)
+        metrics = analysis["metrics"]
+        dimensions = analysis["dimensions"]
+        intent = analysis["intent"]
+        time_period = analysis["time_period"]
+        filters = analysis["filters"]
 
-    return group_by
+        source_tables = self.select_source_tables(
+            metrics=metrics,
+            dimensions=dimensions
+        )
 
+        operations = self.determine_operations(
+            intent=intent
+        )
 
-def determine_time_granularity(dimensions, intent):
-    """
-    Determine the requested time granularity.
-    """
+        group_by = self.determine_group_by(
+            dimensions=dimensions
+        )
 
-    if "Month" in dimensions:
-        return "month"
+        time_granularity = (
+            self.determine_time_granularity(
+                dimensions=dimensions,
+                intent=intent
+            )
+        )
 
-    if "Year" in dimensions:
-        return "year"
+        sorting = self.determine_sorting(
+            intent=intent
+        )
 
-    if intent == "trend_analysis":
-        return "time"
-
-    return None
-
-
-def determine_sorting(intent):
-    """
-    Determine default result ordering.
-    """
-
-    if intent == "ranking":
         return {
-            "direction": "DESC",
-            "limit": 10
+            "question": question,
+            "intent": intent,
+            "metrics": metrics,
+            "dimensions": dimensions,
+            "time_period": time_period,
+            "time_granularity": time_granularity,
+            "filters": filters,
+            "source_tables": source_tables,
+            "operations": operations,
+            "group_by": group_by,
+            "sorting": sorting
         }
-
-    if intent == "trend_analysis":
-        return {
-            "direction": "ASC",
-            "limit": None
-        }
-
-    return None
 
 
 def create_plan(question):
     """
-    Convert a natural-language business question
-    into a structured analytical plan.
+    Backward-compatible helper used by existing modules.
     """
 
-    analysis = analyze_question(question)
+    planner = AnalyticalPlanner()
 
-    metrics = analysis["metrics"]
-    dimensions = analysis["dimensions"]
-    intent = analysis["intent"]
-    time_period = analysis["time_period"]
-    filters = analysis["filters"]
-
-    source_tables = select_source_tables(
-        metrics=metrics,
-        dimensions=dimensions
+    return planner.create_plan(
+        question
     )
-
-    operations = determine_operations(
-        intent=intent
-    )
-
-    group_by = determine_group_by(
-        dimensions=dimensions
-    )
-
-    time_granularity = determine_time_granularity(
-        dimensions=dimensions,
-        intent=intent
-    )
-
-    sorting = determine_sorting(
-        intent=intent
-    )
-
-    plan = {
-        "question": question,
-        "intent": intent,
-
-        "metrics": metrics,
-        "dimensions": dimensions,
-
-        "time_period": time_period,
-        "time_granularity": time_granularity,
-
-        "filters": filters,
-
-        "source_tables": source_tables,
-
-        "operations": operations,
-
-        "group_by": group_by,
-
-        "sorting": sorting
-    }
-
-    return plan
