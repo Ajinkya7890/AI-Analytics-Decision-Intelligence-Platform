@@ -115,6 +115,50 @@ WHERE delivery_days IS NOT NULL;
 """.strip()
 
 
+def generate_statistical_sql(plan):
+    """
+    Generate SQL for statistical analysis of a metric.
+    """
+
+    metrics = plan.get("metrics", [])
+    source_tables = plan.get("source_tables", [])
+
+    if not metrics:
+        raise ValueError(
+            "No metric was identified for statistical analysis."
+        )
+
+    if not source_tables:
+        raise ValueError(
+            "No source table was identified for statistical analysis."
+        )
+
+    metric = metrics[0]
+    source_table = source_tables[0]
+
+    metric_mapping = METRIC_COLUMN_MAP.get(metric)
+
+    if not metric_mapping:
+        raise ValueError(
+            f"No metric mapping is available for '{metric}'."
+        )
+
+    metric_column = metric_mapping.get(source_table)
+
+    if not metric_column:
+        raise ValueError(
+            f"No column mapping is available for metric "
+            f"'{metric}' in table '{source_table}'."
+        )
+
+    return f"""
+SELECT
+    {metric_column}
+FROM {source_table}
+WHERE {metric_column} IS NOT NULL;
+""".strip()
+
+
 def generate_root_cause_baseline_sql(plan):
     time_period = plan.get("time_period")
     year_filter = ""
@@ -309,14 +353,11 @@ def generate_sql(question):
         return generate_seller_revenue_ranking_sql(plan)
 
     # ---------------------------------------------------------
-    # Average delivery
+    # Statistical analysis
     # ---------------------------------------------------------
 
-    if (
-        intent == "statistical"
-        and "Average Delivery Days" in metrics
-    ):
-        return generate_average_delivery_sql(plan)
+    if intent == "statistical":
+        return generate_statistical_sql(plan)
 
     # ---------------------------------------------------------
     # Seller comparison

@@ -6,6 +6,7 @@ TEST_QUESTIONS = [
     "Which products generated the highest revenue?",
     "Which sellers generated the highest revenue?",
     "What is the average delivery time?",
+    "What is the average review score?",
     "What caused the decline in sales in 2018?",
 ]
 

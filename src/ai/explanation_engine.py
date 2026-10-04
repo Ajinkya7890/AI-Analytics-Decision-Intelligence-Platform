@@ -7,8 +7,23 @@ class ExplanationEngine:
 
         report = investigation_report
 
-        previous_year, current_year = report["period"]
-        overall = report["overall_result"]
+        period = report["period"]
+        overall = report["overall"]
+
+        previous_year = period["previous_year"]
+        current_year = period["current_year"]
+
+        previous_revenue = overall["previous_revenue"]
+        current_revenue = overall["current_revenue"]
+        revenue_change = overall["revenue_change"]
+        percentage_change = overall["percentage_change"]
+
+        if revenue_change > 0:
+            overall_direction = "increased"
+        elif revenue_change < 0:
+            overall_direction = "decreased"
+        else:
+            overall_direction = "remained unchanged"
 
         prompt = f"""
 You are an analytical business intelligence assistant.
@@ -26,110 +41,177 @@ ANALYSIS PERIOD:
 {previous_year} to {current_year}
 
 OVERALL RESULT:
-Previous revenue: ₹{overall["previous_revenue"]:,.2f}
-Current revenue: ₹{overall["current_revenue"]:,.2f}
-Revenue change: ₹{overall["revenue_change"]:,.2f}
-Percentage change: {overall["percentage_change"]:.2f}%
+Previous revenue: {previous_revenue:,.2f}
+Current revenue: {current_revenue:,.2f}
+Revenue change: {revenue_change:,.2f}
+Percentage change: {percentage_change:.2f}%
+Overall revenue direction: {overall_direction}
 
-TOP GROWTH CONTRIBUTORS:
-"""
+IMPORTANT BUSINESS SEMANTICS
+=============================
 
-        for index, driver in enumerate(
-            report["growth_drivers"],
-            start=1
-        ):
-            prompt += f"""
-{index}. {driver["category"]}
-Revenue contribution: ₹{driver["revenue_change"]:,.2f}
-Share of total revenue change: {driver["contribution_pct"]:.2f}%
+The overall revenue direction above is authoritative.
 
-Growth driver:
-{driver["primary_driver"]} → ₹{driver["primary_driver_effect"]:,.2f}
-"""
+A category can decline even when total company revenue increases.
 
-            if driver["primary_drag"]:
-                prompt += f"""
-Growth drag within this growing category:
-{driver["primary_drag"]} → ₹{driver["primary_drag_effect"]:,.2f}
-"""
+Therefore:
 
-        prompt += """
+- A declining category is a negative contributor to overall
+  revenue growth.
+- A declining category is NOT evidence that overall revenue
+  decreased unless the overall result explicitly says revenue
+  decreased.
+- A growing category is a positive contributor to overall
+  revenue growth.
+- A growth drag is a negative effect inside a category that
+  still contributed positively overall.
+- A decline offset is a positive effect inside a category that
+  still contributed negatively overall.
 
-TOP DECLINING CATEGORIES:
+Never confuse category-level movement with overall revenue direction.
+
+TOP POSITIVE CONTRIBUTORS
+=========================
 """
 
         for index, category in enumerate(
-            report["declining_categories"],
+            report["top_positive_contributors"],
             start=1
         ):
+
             prompt += f"""
 {index}. {category["category"]}
-Revenue change: ₹{category["revenue_change"]:,.2f}
-Share of total revenue change: {category["contribution_pct"]:.2f}%
 
-Decline driver:
-{category["primary_driver"]} → ₹{category["primary_driver_effect"]:,.2f}
+Revenue contribution:
+{category["revenue_change"]:,.2f}
+
+Share of total revenue change:
+{category["contribution_pct"]:.2f}%
+
+Primary growth driver:
+{category["growth_driver"]} → {category["growth_driver_effect"]:,.2f}
 """
 
-            if category["offset"]:
+            if category["growth_drag"]:
                 prompt += f"""
-Decline offset within this declining category:
-{category["offset"]} → ₹{category["offset_effect"]:,.2f}
+Growth drag within this growing category:
+{category["growth_drag"]} → {category["growth_drag_effect"]:,.2f}
 """
 
         prompt += """
 
-RESPONSE STRUCTURE:
+TOP NEGATIVE CONTRIBUTORS
+=========================
+"""
+
+        for index, category in enumerate(
+            report["top_negative_contributors"],
+            start=1
+        ):
+
+            prompt += f"""
+{index}. {category["category"]}
+
+Revenue change:
+{category["revenue_change"]:,.2f}
+
+Share of total revenue change:
+{category["contribution_pct"]:.2f}%
+
+Primary decline driver:
+{category["decline_driver"]} → {category["decline_driver_effect"]:,.2f}
+"""
+
+            if category["decline_offset"]:
+                prompt += f"""
+Decline offset within this declining category:
+{category["decline_offset"]} → {category["decline_offset_effect"]:,.2f}
+"""
+
+        prompt += """
+
+RESPONSE STRUCTURE
+==================
 
 1. OVERALL RESULT
-State whether revenue increased or decreased.
-If the user's question contains an incorrect assumption,
-correct it explicitly.
 
-2. GROWTH DRIVERS
-Explain the most important categories that increased revenue.
-For each category, mention its revenue contribution and
-primary growth driver.
+State clearly whether overall revenue increased, decreased,
+or remained unchanged.
+
+Use the exact overall revenue change and percentage change.
+
+If the user's question contains an incorrect assumption about
+the overall direction, explicitly correct that assumption.
+
+2. GROWTH CONTRIBUTORS
+
+Explain the most important categories that contributed
+positively to the overall revenue change.
+
+Mention their revenue contribution and primary growth driver.
 
 3. GROWTH DRAGS
+
 Only mention a growth drag when it belongs to a category
-that itself contributed positively to revenue.
-A growth drag is a negative effect within a growing category.
-It must NOT be described as an overall revenue decline.
+that itself contributed positively.
+
+Explain that the drag reduced the category's positive impact.
+
+Do NOT describe a growth drag as an overall revenue decline.
 
 4. DECLINING CATEGORIES
-Explain the most important categories that reduced revenue.
-For each category, mention its revenue decline and primary
-decline driver.
+
+Explain categories whose revenue contribution was negative.
+
+Use wording such as:
+
+- "negative contributor to overall revenue growth"
+- "reduced the overall revenue growth"
+- "experienced a category-level decline"
+
+Do NOT say that these categories caused overall revenue
+to decrease when the overall result shows revenue growth.
 
 5. DECLINE OFFSETS
+
 Only mention an offset when it belongs to a declining category.
-An offset partially reduces that category's decline.
-It must NOT be described as an overall revenue growth driver.
+
+Explain that the offset partially reduced that category's
+negative contribution.
+
+Do NOT describe a decline offset as an overall growth driver.
 
 6. BUSINESS INTERPRETATION
-Summarize ONLY:
-- the overall revenue direction and magnitude,
-- the most important positive contributors and their drivers,
-- the most important negative contributors and their drivers.
 
-Do NOT use decline offsets as evidence of overall revenue growth.
-Do NOT use growth drags as evidence of overall revenue decline.
-Do NOT introduce interpretations that are not directly supported
-by the analytical report.
+Summarize:
 
-RULES:
+- overall revenue direction,
+- magnitude of the change,
+- strongest positive contributors,
+- strongest negative contributors,
+- primary drivers behind those movements.
 
-- Use ONLY the analytical report above.
-- Do not invent facts, numbers, categories, or explanations.
+Maintain a strict distinction between:
+
+- overall revenue direction,
+- positive contributors,
+- negative contributors,
+- growth drags,
+- decline offsets.
+
+RULES
+=====
+
+- Use ONLY the analytical report.
+- Do not invent facts.
+- Do not invent numbers.
 - Do not calculate new metrics.
-- Do not contradict the analytical report.
-- Preserve the distinction between:
-  * growth drivers
-  * growth drags
-  * decline drivers
-  * decline offsets
-- Use the exact numbers provided in the report.
+- Do not change numerical values.
+- Do not contradict the overall revenue direction.
+- Do not confuse category-level declines with overall decline.
+- Do not describe negative contributors as causing an overall
+  decrease when overall revenue increased.
+- Preserve the analytical meaning of every driver.
 - Keep the response concise and business-focused.
 """
 
