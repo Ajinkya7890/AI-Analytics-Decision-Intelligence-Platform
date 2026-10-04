@@ -1,7 +1,238 @@
 import re
 
 
+METRIC_PATTERNS = {
+    "Revenue": [
+        "revenue",
+        "sales",
+        "turnover",
+        "sales value",
+        "sales amount"
+    ],
+    "Freight Revenue": [
+        "freight",
+        "shipping revenue",
+        "shipping cost",
+        "freight value"
+    ],
+    "Average Order Value": [
+        "average order value",
+        "aov",
+        "order value per order"
+    ],
+    "Order Count": [
+        "orders",
+        "order count",
+        "number of orders",
+        "how many orders"
+    ],
+    "Item Count": [
+        "items",
+        "item count",
+        "number of items",
+        "units",
+        "units sold",
+        "quantity sold"
+    ],
+    "Average Review Score": [
+        "review score",
+        "review rating",
+        "average review",
+        "rating",
+        "ratings"
+    ],
+    "Average Delivery Days": [
+        "delivery time",
+        "delivery days",
+        "delivery duration",
+        "shipping time",
+        "average delivery"
+    ]
+}
+
+
+DIMENSION_PATTERNS = {
+    "Product": [
+        "product",
+        "products",
+        "category",
+        "categories",
+        "product category"
+    ],
+    "Seller": [
+        "seller",
+        "sellers",
+        "vendor",
+        "vendors"
+    ],
+    "Customer": [
+        "customer",
+        "customers",
+        "buyer",
+        "buyers"
+    ],
+    "Month": [
+        "month",
+        "monthly",
+        "by month",
+        "per month"
+    ],
+    "Year": [
+        "year",
+        "yearly",
+        "annual",
+        "annually",
+        "by year",
+        "per year"
+    ]
+}
+
+
+def detect_intent(question_lower):
+    """
+    Detect the primary analytical intent from the question.
+    """
+
+    root_cause_patterns = [
+        "why",
+        "reason",
+        "cause",
+        "caused",
+        "driver",
+        "drivers",
+        "decline reason",
+        "growth reason"
+    ]
+
+    trend_patterns = [
+        "trend",
+        "over time",
+        "monthly",
+        "weekly",
+        "daily",
+        "month over month",
+        "year over year",
+        "yoy",
+        "mom"
+    ]
+
+    comparison_patterns = [
+        "compare",
+        "comparison",
+        "versus",
+        "vs",
+        "against",
+        "difference between"
+    ]
+
+    ranking_patterns = [
+        "top",
+        "highest",
+        "lowest",
+        "best",
+        "worst",
+        "most",
+        "least",
+        "rank",
+        "ranking"
+    ]
+
+    statistical_patterns = [
+        "average",
+        "mean",
+        "median",
+        "standard deviation",
+        "variance",
+        "distribution",
+        "percentile"
+    ]
+
+    aggregation_patterns = [
+        "how many",
+        "count",
+        "number of",
+        "total",
+        "sum",
+        "overall",
+        "by seller",
+        "by product",
+        "by category",
+        "by customer",
+        "grouped by",
+        "per seller",
+        "per product",
+        "per category",
+        "per customer"
+    ]
+
+    if any(pattern in question_lower for pattern in root_cause_patterns):
+        return "root_cause"
+
+    if any(pattern in question_lower for pattern in comparison_patterns):
+        return "comparison"
+
+    if any(pattern in question_lower for pattern in ranking_patterns):
+        return "ranking"
+
+    if any(pattern in question_lower for pattern in trend_patterns):
+        return "trend_analysis"
+
+    if any(pattern in question_lower for pattern in statistical_patterns):
+        return "statistical"
+
+    if any(pattern in question_lower for pattern in aggregation_patterns):
+        return "aggregation"
+
+    return "unknown"
+
+
+def detect_metrics(question_lower):
+    """
+    Detect business metrics mentioned in the question.
+    """
+
+    metrics = []
+
+    for metric, patterns in METRIC_PATTERNS.items():
+        if any(pattern in question_lower for pattern in patterns):
+            metrics.append(metric)
+
+    return metrics
+
+
+def detect_dimensions(question_lower):
+    """
+    Detect analytical dimensions mentioned in the question.
+    """
+
+    dimensions = []
+
+    for dimension, patterns in DIMENSION_PATTERNS.items():
+        if any(pattern in question_lower for pattern in patterns):
+            dimensions.append(dimension)
+
+    return dimensions
+
+
+def detect_time_period(question):
+    """
+    Detect explicit years from the question.
+    """
+
+    years = re.findall(
+        r"\b20\d{2}\b",
+        question
+    )
+
+    return years if years else None
+
+
 def analyze_question(question):
+    """
+    Convert a natural-language business question into
+    a structured analytical representation.
+    """
+
     question = question.strip()
 
     if not question:
@@ -9,114 +240,13 @@ def analyze_question(question):
 
     question_lower = question.lower()
 
-    intent = "unknown"
-
-    if any(word in question_lower for word in [
-        "why",
-        "reason",
-        "cause",
-        "caused"
-    ]):
-        intent = "root_cause"
-
-    elif any(word in question_lower for word in [
-        "trend",
-        "over time",
-        "monthly",
-        "weekly",
-        "daily"
-    ]):
-        intent = "trend_analysis"
-
-    elif any(word in question_lower for word in [
-        "compare",
-        "comparison",
-        "versus",
-        "vs"
-    ]):
-        intent = "comparison"
-
-    elif any(word in question_lower for word in [
-        "how many",
-        "count",
-        "number of"
-    ]):
-        intent = "aggregation"
-
-    elif any(word in question_lower for word in [
-        "average",
-        "mean",
-        "median"
-    ]):
-        intent = "statistical"
-
-    elif any(word in question_lower for word in [
-        "top",
-        "highest",
-        "lowest",
-        "best",
-        "worst"
-    ]):
-        intent = "ranking"
-
     result = {
         "original_question": question,
-        "intent": intent,
-        "time_period": None,
-        "metrics": [],
-        "dimensions": [],
+        "intent": detect_intent(question_lower),
+        "time_period": detect_time_period(question),
+        "metrics": detect_metrics(question_lower),
+        "dimensions": detect_dimensions(question_lower),
         "filters": []
     }
-
-    # Detect common metrics
-    if "revenue" in question_lower:
-        result["metrics"].append("Revenue")
-
-    if "freight" in question_lower:
-        result["metrics"].append("Freight Revenue")
-
-    if "order value" in question_lower or "aov" in question_lower:
-        result["metrics"].append("Average Order Value")
-
-    if "orders" in question_lower:
-        result["metrics"].append("Order Count")
-
-    if "items" in question_lower:
-        result["metrics"].append("Item Count")
-
-    if "review" in question_lower or "rating" in question_lower:
-        result["metrics"].append("Average Review Score")
-
-    if "delivery" in question_lower:
-        result["metrics"].append("Average Delivery Days")
-
-    # Detect dimensions
-    if "product" in question_lower or "category" in question_lower:
-        result["dimensions"].append("Product")
-
-    if "seller" in question_lower:
-        result["dimensions"].append("Seller")
-
-    if "customer" in question_lower:
-        result["dimensions"].append("Customer")
-
-    if any(word in question_lower for word in [
-        "month",
-        "monthly"
-    ]):
-        result["dimensions"].append("Month")
-
-    if any(word in question_lower for word in [
-        "year",
-        "yearly",
-        "annual"
-    ]):
-        result["dimensions"].append("Year")
-
-    # Detect years
-    years = re.findall(r"\b20\d{2}\b", question)
-
-    if years:
-        result["time_period"] = years
 
     return result
