@@ -1,46 +1,65 @@
-import re
-
+from src.config.database import get_connection
 from src.metadata.metadata_loader import get_metrics
-from src.metadata.analytical_table_registry import (
-    get_analytical_table_registry
-)
 
 
 class MetricResolver:
     """
-    Resolves business metrics to their physical SQL sources
-    using metadata.metrics.
+    Metadata-driven registry for analytical metrics.
 
-    The resolver extracts schema.table.column references
-    from metric SQL expressions and determines the physical
-    source tables and available analytical-layer sources.
+    Business metric definitions come from:
 
-    This keeps metric-to-source logic outside the analytical
-    planner and SQL generator.
+        metadata.metrics
+
+    Physical analytical metric sources come from:
+
+        metadata.metric_sources
     """
 
-    THREE_PART_IDENTIFIER_PATTERN = re.compile(
-        r"\b("
-        r"[a-zA-Z_][\w]*"
-        r"\."
-        r"[a-zA-Z_][\w]*"
-        r"\."
-        r"[a-zA-Z_][\w]*"
-        r")\b"
-    )
-
     def __init__(self):
-        self.analytical_table_registry = (
-            get_analytical_table_registry()
-        )
-
         self._metrics = self._load_metrics()
 
     def _load_metrics(self):
-        """
-        Load metric definitions and resolve their physical
-        source tables and referenced columns.
-        """
+
+        metric_definitions = self._load_metric_definitions()
+        metric_sources = self._load_metric_sources()
+
+        metrics = {}
+
+        for metric_name, metric in metric_definitions.items():
+
+            sources = metric_sources.get(
+                metric_name,
+                []
+            )
+
+            metrics[metric_name] = {
+                "name": metric["name"],
+                "definition": metric["definition"],
+                "sql_expression": metric["sql_expression"],
+                "metric_type": metric["metric_type"],
+
+                "source_tables": list(
+                    dict.fromkeys(
+                        source["table_name"]
+                        for source in sources
+                    )
+                ),
+
+                "referenced_columns": [
+                    (
+                        f"{source['table_name']}."
+                        f"{source['column_name']}"
+                    )
+                    for source in sources
+                ],
+
+                "analytical_sources": sources
+            }
+
+        return metrics
+
+    @staticmethod
+    def _load_metric_definitions():
 
         metrics = {}
 
@@ -51,171 +70,107 @@ class MetricResolver:
             sql_expression = row[2]
             metric_type = row[3]
 
-            source_tables = self._resolve_source_tables(
-                sql_expression
-            )
-
-            referenced_columns = (
-                self._extract_referenced_columns(
-                    sql_expression
-                )
-            )
-
-            analytical_sources = [
-                table_name
-                for table_name in source_tables
-                if self.analytical_table_registry.has_table(
-                    table_name
-                )
-            ]
-
             metrics[metric_name] = {
                 "name": metric_name,
                 "definition": metric_definition,
                 "sql_expression": sql_expression,
-                "metric_type": metric_type,
-                "source_tables": source_tables,
-                "referenced_columns": referenced_columns,
-                "analytical_sources": analytical_sources
+                "metric_type": metric_type
             }
 
         return metrics
 
-    def _resolve_source_tables(self, sql_expression):
-        """
-        Resolve schema-qualified tables from fully-qualified
-        schema.table.column references.
+    @staticmethod
+    def _load_metric_sources():
 
-        Example:
+        connection = get_connection()
 
-            SUM(core.fact_order_item.price)
+        try:
 
-        resolves to:
+            cursor = connection.cursor()
 
-            core.fact_order_item
-        """
+            cursor.execute("""
+                SELECT
+                    m.metric_name,
+                    t.table_name,
+                    c.column_name,
+                    c.data_type,
+                    ms.source_role,
+                    ms.aggregation_method,
+                    ms.source_grain,
+                    ms.calculation_expression
+                FROM metadata.metric_sources ms
+                JOIN metadata.metrics m
+                    ON ms.metric_id = m.metric_id
+                JOIN metadata.tables t
+                    ON ms.table_id = t.table_id
+                JOIN metadata.columns c
+                    ON ms.column_id = c.column_id
+                ORDER BY
+                    m.metric_id,
+                    ms.metric_source_id;
+            """)
 
-        if not sql_expression:
-            return []
+            rows = cursor.fetchall()
 
-        available_analytical_tables = set(
-            self.analytical_table_registry.get_table_names()
-        )
+        finally:
 
-        referenced_columns = (
-            self._extract_referenced_columns(
-                sql_expression
-            )
-        )
+            cursor.close()
+            connection.close()
 
-        resolved_tables = []
+        metric_sources = {}
 
-        for reference in referenced_columns:
+        for row in rows:
 
-            parts = reference.split(".")
+            (
+                metric_name,
+                table_name,
+                column_name,
+                data_type,
+                source_role,
+                aggregation_method,
+                source_grain,
+                calculation_expression
+            ) = row
 
-            if len(parts) != 3:
-                continue
+            if metric_name not in metric_sources:
 
-            schema_name = parts[0]
-            table_name = parts[1]
+                metric_sources[metric_name] = []
 
-            qualified_table = (
-                f"{schema_name}.{table_name}"
-            )
+            metric_sources[metric_name].append({
 
-            if qualified_table in resolved_tables:
-                continue
+                "table_name": table_name,
 
-            if (
-                qualified_table
-                in available_analytical_tables
-            ):
-                resolved_tables.append(
-                    qualified_table
-                )
-                continue
+                "column_name": column_name,
 
-            if schema_name == "core":
-                resolved_tables.append(
-                    qualified_table
-                )
+                "data_type": data_type,
 
-        return resolved_tables
+                "source_role": source_role,
 
-    @classmethod
-    def _extract_referenced_columns(cls, sql_expression):
-        """
-        Extract fully-qualified schema.table.column
-        references from a SQL expression.
+                "aggregation_method": aggregation_method,
 
-        Example:
+                "source_grain": source_grain,
 
-            SUM(core.fact_order_item.price)
+                "calculation_expression":
+                    calculation_expression
+            })
 
-        returns:
-
-            [
-                "core.fact_order_item.price"
-            ]
-        """
-
-        if not sql_expression:
-            return []
-
-        matches = (
-            cls.THREE_PART_IDENTIFIER_PATTERN.findall(
-                sql_expression
-            )
-        )
-
-        return list(
-            dict.fromkeys(matches)
-        )
+        return metric_sources
 
     def get_metric(self, metric_name):
-        """
-        Return resolved metadata for a metric.
-        """
-
-        return self._metrics.get(
-            metric_name
-        )
+        return self._metrics.get(metric_name)
 
     def has_metric(self, metric_name):
-        """
-        Check whether a metric exists.
-        """
-
         return metric_name in self._metrics
 
     def get_all_metrics(self):
-        """
-        Return all resolved metrics.
-        """
-
-        return list(
-            self._metrics.values()
-        )
+        return list(self._metrics.values())
 
     def get_metric_names(self):
-        """
-        Return all canonical metric names.
-        """
-
-        return list(
-            self._metrics.keys()
-        )
+        return list(self._metrics.keys())
 
     def get_source_tables(self, metric_name):
-        """
-        Return physical source tables referenced by
-        the metric.
-        """
 
-        metric = self.get_metric(
-            metric_name
-        )
+        metric = self.get_metric(metric_name)
 
         if not metric:
             return []
@@ -223,14 +178,8 @@ class MetricResolver:
         return metric["source_tables"]
 
     def get_analytical_sources(self, metric_name):
-        """
-        Return analytics-layer tables available for
-        the metric.
-        """
 
-        metric = self.get_metric(
-            metric_name
-        )
+        metric = self.get_metric(metric_name)
 
         if not metric:
             return []
@@ -238,24 +187,95 @@ class MetricResolver:
         return metric["analytical_sources"]
 
     def get_referenced_columns(self, metric_name):
-        """
-        Return fully-qualified columns referenced by
-        the metric.
-        """
 
-        metric = self.get_metric(
-            metric_name
-        )
+        metric = self.get_metric(metric_name)
 
         if not metric:
             return []
 
         return metric["referenced_columns"]
 
+    def get_source_metadata(
+        self,
+        metric_name,
+        source_table
+    ):
+        """
+        Return metadata for a specific physical metric source.
+        """
+
+        sources = self.get_analytical_sources(
+            metric_name
+        )
+
+        for source in sources:
+
+            if source["table_name"] == source_table:
+
+                return source
+
+        return None
+
+    def get_aggregation_method(
+        self,
+        metric_name,
+        source_table
+    ):
+        """
+        Return the aggregation method registered for
+        a specific metric source.
+        """
+
+        source = self.get_source_metadata(
+            metric_name,
+            source_table
+        )
+
+        if not source:
+            return None
+
+        return source["aggregation_method"]
+
+    def get_source_grain(
+        self,
+        metric_name,
+        source_table
+    ):
+        """
+        Return the analytical grain registered for
+        a metric source.
+        """
+
+        source = self.get_source_metadata(
+            metric_name,
+            source_table
+        )
+
+        if not source:
+            return None
+
+        return source["source_grain"]
+
+    def get_calculation_expression(
+        self,
+        metric_name,
+        source_table
+    ):
+        """
+        Return the calculation expression registered for
+        a specific metric source.
+        """
+
+        source = self.get_source_metadata(
+            metric_name,
+            source_table
+        )
+
+        if not source:
+            return None
+
+        return source["calculation_expression"]
+
 
 def get_metric_resolver():
-    """
-    Create and return a metadata-driven metric resolver.
-    """
-
     return MetricResolver()
