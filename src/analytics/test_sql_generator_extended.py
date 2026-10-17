@@ -8,6 +8,9 @@ TEST_QUESTIONS = [
     "What is the average delivery time?",
     "What is the average review score?",
     "What caused the decline in sales in 2018?",
+    "Which products generated the highest revenue in 2017?",
+    "Which sellers generated the highest revenue in 2017?",
+    "Compare sellers by revenue in 2017",
 ]
 
 

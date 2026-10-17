@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from statistics import mean, median, stdev, variance
 
 
@@ -5,6 +6,13 @@ def clean_numeric_values(*values):
     """
     Remove None values and convert numeric values to float.
     """
+
+    if (
+        len(values) == 1
+        and isinstance(values[0], Iterable)
+        and not isinstance(values[0], (str, bytes))
+    ):
+        values = values[0]
 
     cleaned = []
 

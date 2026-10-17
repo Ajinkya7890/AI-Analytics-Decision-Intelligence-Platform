@@ -37,6 +37,14 @@ METRIC_RESULT_COLUMNS = {
         "delivery_days",
         "average_delivery_days",
     ],
+    "On-Time Delivery Rate": [
+        "on_time_delivery_rate",
+        "is_on_time",
+    ],
+    "Repeat Customer Rate": [
+        "repeat_customer_rate",
+        "repeat_customer",
+    ],
 }
 
 

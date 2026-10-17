@@ -93,14 +93,141 @@ def source_supports_metric(
         return False
 
 
+def is_derived_ratio_metric(
+    metric
+):
+    """
+    Check whether a metric is registered as a derived ratio metric.
+    """
+
+    metric_definition = metric_resolver.get_metric(
+        metric
+    )
+
+    if not metric_definition:
+        return False
+
+    return metric_definition.get("metric_type") == "derived_ratio"
+
+
+def get_source_table_date_column(
+    source_table
+):
+    """
+    Resolve physical date/time column from metadata for a source table.
+    Checks 'Year' and 'Month' dimensions in the dimension registry first,
+    then inspects analytical table metadata for registered date columns.
+    """
+
+    for dimension in ["Year", "Month"]:
+
+        columns = get_dimension_columns(
+            dimension,
+            source_table
+        )
+
+        if columns:
+            return columns[0]
+
+    for candidate in ["full_date", "purchase_date"]:
+        try:
+            from src.metadata.metadata_loader import get_columns
+            cols = [
+                c[1] for c in get_columns(source_table)
+                if c[1] == candidate
+            ]
+            if cols:
+                return cols[0]
+        except Exception:
+            pass
+
+    return None
+
+
+def build_time_period_filter(
+    source_table,
+    time_period
+):
+    """
+    Build a SQL WHERE condition for time period filtering based on
+    the date column of the source table.
+    """
+
+    if not time_period:
+        return ""
+
+    date_column = get_source_table_date_column(
+        source_table
+    )
+
+    if not date_column:
+
+        raise ValueError(
+            f"Source table '{source_table}' does not have a date column "
+            f"to filter by time period {time_period}."
+        )
+
+    valid_years = [
+        int(y) for y in time_period
+        if str(y).isdigit()
+    ]
+
+    if not valid_years:
+        raise ValueError(
+            f"Time-period filter {time_period} does not contain any valid year values."
+        )
+
+    if len(valid_years) == 1:
+        return f"EXTRACT(YEAR FROM {date_column}) = {valid_years[0]}"
+
+    years_str = ", ".join(
+        str(y) for y in valid_years
+    )
+
+    return f"EXTRACT(YEAR FROM {date_column}) IN ({years_str})"
+
+
+def build_core_year_filter(
+    time_period,
+    timestamp_column="o.purchase_timestamp"
+):
+    """
+    Build a SQL condition filtering by year for a timestamp column in core tables.
+    """
+
+    if not time_period:
+        return ""
+
+    valid_years = [
+        int(y) for y in time_period
+        if str(y).isdigit()
+    ]
+
+    if not valid_years:
+        raise ValueError(
+            f"Time-period filter {time_period} does not contain any valid year values."
+        )
+
+    if len(valid_years) == 1:
+        return f"EXTRACT(YEAR FROM {timestamp_column}) = {valid_years[0]}"
+
+    years_str = ", ".join(
+        str(y) for y in valid_years
+    )
+
+    return f"EXTRACT(YEAR FROM {timestamp_column}) IN ({years_str})"
+
+
 def select_compatible_source_table(
     metric,
     dimensions,
-    source_tables
+    source_tables,
+    time_period=None
 ):
     """
     Select a source table that supports both the metric
-    and all requested dimensions.
+    and all requested dimensions, as well as time-period filtering
+    if requested.
     """
 
     for source_table in source_tables:
@@ -111,14 +238,25 @@ def select_compatible_source_table(
         ):
             continue
 
-        if all(
+        if not all(
             source_supports_dimension(
                 dimension,
                 source_table
             )
             for dimension in dimensions
         ):
-            return source_table
+            continue
+
+        if time_period and not get_source_table_date_column(source_table):
+            continue
+
+        return source_table
+
+    if time_period:
+        raise ValueError(
+            f"No compatible analytical source table supporting time-period filter {time_period} "
+            f"was found for metric '{metric}' and dimensions {dimensions}."
+        )
 
     raise ValueError(
         f"No compatible analytical source table was found "
@@ -434,10 +572,15 @@ def generate_generic_aggregation_sql(
 
     metric = metrics[0]
 
+    time_period = plan.get(
+        "time_period"
+    )
+
     source_table = select_compatible_source_table(
         metric=metric,
         dimensions=dimensions,
-        source_tables=source_tables
+        source_tables=source_tables,
+        time_period=time_period
     )
 
     metric_column = get_metric_column(
@@ -472,6 +615,13 @@ def generate_generic_aggregation_sql(
         else None
     )
 
+    time_filter = build_time_period_filter(
+        source_table=source_table,
+        time_period=time_period
+    )
+
+    where_clause = f"\nWHERE {time_filter}" if time_filter else ""
+
     # ---------------------------------------------------------
     # No dimensions
     # ---------------------------------------------------------
@@ -481,7 +631,7 @@ def generate_generic_aggregation_sql(
         return f"""
 SELECT
     {metric_expression} AS {metric_alias}
-FROM {source_table};
+FROM {source_table}{where_clause};
 """.strip()
 
     select_parts = []
@@ -532,7 +682,7 @@ FROM {source_table};
 SELECT
     {select_clause},
     {metric_expression} AS {metric_alias}
-FROM {source_table}
+FROM {source_table}{where_clause}
 GROUP BY {group_by_clause}
 ORDER BY month;
 """.strip()
@@ -543,7 +693,7 @@ ORDER BY month;
 SELECT
     {select_clause},
     {metric_expression} AS {metric_alias}
-FROM {source_table}
+FROM {source_table}{where_clause}
 GROUP BY {group_by_clause}
 ORDER BY year;
 """.strip()
@@ -552,7 +702,7 @@ ORDER BY year;
 SELECT
     {select_clause},
     {metric_expression} AS {metric_alias}
-FROM {source_table}
+FROM {source_table}{where_clause}
 GROUP BY {group_by_clause}
 ORDER BY {metric_alias} DESC;
 """.strip()
@@ -567,7 +717,7 @@ ORDER BY {metric_alias} DESC;
 SELECT
     {select_clause},
     {metric_expression} AS {metric_alias}
-FROM {source_table}
+FROM {source_table}{where_clause}
 ORDER BY {metric_alias} DESC;
 """.strip()
 
@@ -581,7 +731,7 @@ ORDER BY {metric_alias} DESC;
 SELECT
     {select_clause},
     {metric_expression} AS {metric_alias}
-FROM {source_table}
+FROM {source_table}{where_clause}
 GROUP BY {group_by_clause}
 ORDER BY month;
 """.strip()
@@ -592,7 +742,7 @@ ORDER BY month;
 SELECT
     {select_clause},
     {metric_expression} AS {metric_alias}
-FROM {source_table}
+FROM {source_table}{where_clause}
 GROUP BY {group_by_clause}
 ORDER BY year;
 """.strip()
@@ -605,7 +755,7 @@ ORDER BY year;
 SELECT
     {select_clause},
     {metric_expression} AS {metric_alias}
-FROM {source_table}
+FROM {source_table}{where_clause}
 GROUP BY {group_by_clause}
 ORDER BY {metric_alias} DESC;
 """.strip()
@@ -619,6 +769,9 @@ def generate_monthly_revenue_sql(
     """
 
     metric = "Revenue"
+    time_period = plan.get(
+        "time_period"
+    )
 
     source_table = select_compatible_source_table(
         metric=metric,
@@ -626,7 +779,8 @@ def generate_monthly_revenue_sql(
         source_tables=plan.get(
             "source_tables",
             []
-        )
+        ),
+        time_period=time_period
     )
 
     metric_column = get_metric_column(
@@ -647,11 +801,18 @@ def generate_monthly_revenue_sql(
 
     date_column = month_columns[0]
 
+    time_filter = build_time_period_filter(
+        source_table=source_table,
+        time_period=time_period
+    )
+
+    where_clause = f"\nWHERE {time_filter}" if time_filter else ""
+
     return f"""
 SELECT
     DATE_TRUNC('month', {date_column})::DATE AS month,
     SUM({metric_column}) AS revenue
-FROM {source_table}
+FROM {source_table}{where_clause}
 GROUP BY DATE_TRUNC('month', {date_column})
 ORDER BY month;
 """.strip()
@@ -680,6 +841,32 @@ def generate_product_revenue_ranking_sql(
         "limit",
         10
     )
+
+    time_period = plan.get(
+        "time_period"
+    )
+
+    if time_period:
+        year_filter = build_core_year_filter(
+            time_period,
+            "o.purchase_timestamp"
+        )
+
+        return f"""
+SELECT
+    p.product_id,
+    p.category_name_english,
+    SUM(oi.price) AS total_revenue
+FROM core.fact_order_item oi
+JOIN core.fact_order o
+    ON oi.order_key = o.order_key
+JOIN core.dim_product p
+    ON oi.product_key = p.product_key
+WHERE {year_filter}
+GROUP BY p.product_id, p.category_name_english
+ORDER BY total_revenue {direction}
+LIMIT {limit};
+""".strip()
 
     source_table = select_compatible_source_table(
         metric=metric,
@@ -750,6 +937,33 @@ def generate_seller_revenue_ranking_sql(
         10
     )
 
+    time_period = plan.get(
+        "time_period"
+    )
+
+    if time_period:
+        year_filter = build_core_year_filter(
+            time_period,
+            "o.purchase_timestamp"
+        )
+
+        return f"""
+SELECT
+    s.seller_id,
+    s.city,
+    s.state,
+    SUM(oi.price) AS total_revenue
+FROM core.fact_order_item oi
+JOIN core.fact_order o
+    ON oi.order_key = o.order_key
+JOIN core.dim_seller s
+    ON oi.seller_key = s.seller_key
+WHERE {year_filter}
+GROUP BY s.seller_id, s.city, s.state
+ORDER BY total_revenue {direction}
+LIMIT {limit};
+""".strip()
+
     source_table = select_compatible_source_table(
         metric=metric,
         dimensions=[dimension],
@@ -803,6 +1017,9 @@ def generate_average_delivery_sql(
     """
 
     metric = "Average Delivery Days"
+    time_period = plan.get(
+        "time_period"
+    )
 
     source_table = select_compatible_source_table(
         metric=metric,
@@ -810,7 +1027,8 @@ def generate_average_delivery_sql(
         source_tables=plan.get(
             "source_tables",
             []
-        )
+        ),
+        time_period=time_period
     )
 
     metric_column = get_metric_column(
@@ -818,11 +1036,18 @@ def generate_average_delivery_sql(
         source_table
     )
 
+    time_filter = build_time_period_filter(
+        source_table=source_table,
+        time_period=time_period
+    )
+
+    time_condition = f" AND {time_filter}" if time_filter else ""
+
     return f"""
 SELECT
     ROUND(AVG({metric_column}), 2) AS average_delivery_days
 FROM {source_table}
-WHERE {metric_column} IS NOT NULL;
+WHERE {metric_column} IS NOT NULL{time_condition};
 """.strip()
 
 
@@ -847,6 +1072,10 @@ def generate_statistical_sql(
         []
     )
 
+    time_period = plan.get(
+        "time_period"
+    )
+
     if not metrics:
 
         raise ValueError(
@@ -864,7 +1093,8 @@ def generate_statistical_sql(
     source_table = select_compatible_source_table(
         metric=metric,
         dimensions=[],
-        source_tables=source_tables
+        source_tables=source_tables,
+        time_period=time_period
     )
 
     metric_column = get_metric_column(
@@ -872,11 +1102,18 @@ def generate_statistical_sql(
         source_table
     )
 
+    time_filter = build_time_period_filter(
+        source_table=source_table,
+        time_period=time_period
+    )
+
+    time_condition = f" AND {time_filter}" if time_filter else ""
+
     return f"""
 SELECT
     {metric_column}
 FROM {source_table}
-WHERE {metric_column} IS NOT NULL;
+WHERE {metric_column} IS NOT NULL{time_condition};
 """.strip()
 
 
@@ -889,6 +1126,9 @@ def generate_root_cause_baseline_sql(
     """
 
     metric = "Revenue"
+    time_period = plan.get(
+        "time_period"
+    )
 
     source_table = select_compatible_source_table(
         metric=metric,
@@ -896,7 +1136,8 @@ def generate_root_cause_baseline_sql(
         source_tables=plan.get(
             "source_tables",
             []
-        )
+        ),
+        time_period=time_period
     )
 
     metric_column = get_metric_column(
@@ -916,10 +1157,6 @@ def generate_root_cause_baseline_sql(
         )
 
     date_column = month_columns[0]
-
-    time_period = plan.get(
-        "time_period"
-    )
 
     year_filter = ""
 
@@ -953,6 +1190,32 @@ def generate_seller_revenue_comparison_sql(
 
     metric = "Revenue"
     dimension = "Seller"
+    time_period = plan.get(
+        "time_period"
+    )
+
+    if time_period:
+        year_filter = build_core_year_filter(
+            time_period,
+            "o.purchase_timestamp"
+        )
+
+        return f"""
+SELECT
+    s.seller_id,
+    s.city,
+    s.state,
+    SUM(oi.price) AS total_revenue
+FROM core.fact_order_item oi
+JOIN core.fact_order o
+    ON oi.order_key = o.order_key
+JOIN core.dim_seller s
+    ON oi.seller_key = s.seller_key
+WHERE {year_filter}
+GROUP BY s.seller_id, s.city, s.state
+ORDER BY total_revenue DESC
+LIMIT 10;
+""".strip()
 
     source_table = select_compatible_source_table(
         metric=metric,
@@ -1095,15 +1358,45 @@ def generate_sql(
         )
 
     # ---------------------------------------------------------
-    # Derived metrics
+    # Derived ratio metrics
     #
-    # Derived metrics must be routed through the generic
-    # metadata-driven generator before the statistical branch.
+    # Derived ratio metrics contain their own aggregation logic
+    # and must be routed through the generic metadata-driven
+    # generator before the unaggregated statistical branch.
     # ---------------------------------------------------------
 
-    if (
-        "Average Order Value" in metrics
+    if any(
+        is_derived_ratio_metric(metric)
+        for metric in metrics
     ):
+
+        # An ungrouped statistical distribution request for a derived-ratio
+        # metric cannot produce a distribution without a grouping dimension.
+        if (
+            intent == "statistical"
+            and not dimensions
+            and any(
+                term in plan.get("question", "").lower()
+                for term in [
+                    "distribution",
+                    "dispersion",
+                    "spread",
+                    "histogram",
+                    "variance",
+                    "standard deviation"
+                ]
+            )
+        ):
+            derived_metric = [
+                m for m in metrics
+                if is_derived_ratio_metric(m)
+            ][0]
+
+            raise ValueError(
+                f"Calculating a distribution for derived-ratio metric '{derived_metric}' "
+                f"requires a grouping dimension (such as Month or Category). "
+                f"An ungrouped population produces only a single aggregate rate."
+            )
 
         return generate_generic_aggregation_sql(
             plan
