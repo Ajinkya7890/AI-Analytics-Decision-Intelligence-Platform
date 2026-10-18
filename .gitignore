@@ -2,3 +2,14 @@
 .env
 __pycache__/
 *.pyc
+# Frontend dependencies and build output
+node_modules/
+dashboard/node_modules/
+dashboard/dist/
+
+# Environment files
+.env.*
+!.env.example
+
+# Logs
+npm-debug.log*
