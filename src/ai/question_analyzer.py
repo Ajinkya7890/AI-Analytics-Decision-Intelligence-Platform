@@ -411,6 +411,59 @@ def detect_limit(
     return None
 
 
+def detect_target_entity(
+    question_lower
+):
+    """
+    Detect the specific target entity when a canonical dimension
+    has distinct sub-entities (e.g. Category vs Product).
+    """
+
+    if any(
+        keyword in question_lower
+        for keyword in [
+            "category",
+            "categories",
+            "product category",
+            "product categories"
+        ]
+    ):
+        return "category"
+
+    if any(
+        keyword in question_lower
+        for keyword in [
+            "product",
+            "products"
+        ]
+    ):
+        return "product"
+
+    if any(
+        keyword in question_lower
+        for keyword in [
+            "seller",
+            "sellers",
+            "vendor",
+            "vendors"
+        ]
+    ):
+        return "seller"
+
+    if any(
+        keyword in question_lower
+        for keyword in [
+            "customer",
+            "customers",
+            "buyer",
+            "buyers"
+        ]
+    ):
+        return "customer"
+
+    return None
+
+
 def analyze_question(
     question
 ):
@@ -443,6 +496,10 @@ def analyze_question(
         metrics=metrics
     )
 
+    target_entity = detect_target_entity(
+        question_lower
+    )
+
     return {
 
         "original_question": question,
@@ -450,6 +507,8 @@ def analyze_question(
         "intent": intent,
 
         "analysis_type": analysis_type,
+
+        "target_entity": target_entity,
 
         "time_period": detect_time_period(
             question

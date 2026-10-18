@@ -818,6 +818,100 @@ ORDER BY month;
 """.strip()
 
 
+def is_category_ranking(
+    plan
+):
+    """
+    Check if the ranking plan targets product categories rather than individual products.
+    """
+
+    if plan.get("target_entity") == "category":
+        return True
+
+    question = plan.get("question", "").lower()
+    return any(
+        term in question
+        for term in [
+            "category",
+            "categories",
+            "product category",
+            "product categories"
+        ]
+    )
+
+
+def generate_category_revenue_ranking_sql(
+    plan
+):
+    """
+    Generate category revenue ranking SQL.
+
+    Aggregates revenue at category grain, grouping strictly by category_name_english.
+    Does not group by product_id.
+    """
+
+    sorting = plan.get(
+        "sorting"
+    ) or {}
+
+    raw_direction = sorting.get(
+        "direction",
+        "DESC"
+    )
+
+    direction = "ASC" if str(raw_direction).upper() == "ASC" else "DESC"
+
+    limit = sorting.get(
+        "limit",
+        10
+    )
+
+    if limit is None:
+        limit = 10
+    else:
+        try:
+            limit = int(limit)
+            if limit <= 0:
+                limit = 10
+        except (ValueError, TypeError):
+            limit = 10
+
+    time_period = plan.get(
+        "time_period"
+    )
+
+    if time_period:
+        year_filter = build_core_year_filter(
+            time_period,
+            "o.purchase_timestamp"
+        )
+
+        return f"""
+SELECT
+    p.category_name_english,
+    SUM(oi.price) AS total_revenue
+FROM core.fact_order_item oi
+JOIN core.fact_order o
+    ON oi.order_key = o.order_key
+JOIN core.dim_product p
+    ON oi.product_key = p.product_key
+WHERE {year_filter}
+GROUP BY p.category_name_english
+ORDER BY total_revenue {direction}
+LIMIT {limit};
+""".strip()
+
+    return f"""
+SELECT
+    category_name_english,
+    SUM(total_revenue) AS total_revenue
+FROM analytics.product_metrics
+GROUP BY category_name_english
+ORDER BY total_revenue {direction}
+LIMIT {limit};
+""".strip()
+
+
 def generate_product_revenue_ranking_sql(
     plan
 ):
@@ -1326,6 +1420,16 @@ def generate_sql(
     ):
 
         return generate_monthly_revenue_sql(
+            plan
+        )
+
+    if (
+        intent == "ranking"
+        and "Revenue" in metrics
+        and is_category_ranking(plan)
+    ):
+
+        return generate_category_revenue_ranking_sql(
             plan
         )
 

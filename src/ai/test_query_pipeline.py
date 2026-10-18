@@ -14,7 +14,10 @@ questions = [
     "What is the average order value?",
     "What was our revenue in 2017?",
     "How many orders were placed in 2017?",
-    "What was our monthly revenue in 2017?"
+    "What was our monthly revenue in 2017?",
+    "Which categories generated the highest revenue?",
+    "Which categories generated the highest revenue in 2017?",
+    "What are the top 5 categories by revenue?"
 ]
 
 
@@ -270,6 +273,41 @@ def run_tests():
     assert "LIMIT 5;" in res_seller_comp_top5["sql"], "Unconstrained seller comparison must limit to 5"
     assert len(res_seller_comp_top5["rows"]) == 5, "Unconstrained seller comparison must return 5 rows"
     assert res_seller_comp_top5["rows"][0][0] == "4869f7a5dfa277a7dca6462dcf3b52b2", "Unconstrained seller comparison returns lifetime top seller"
+
+    # 9. Category revenue ranking regression tests
+    res_cat_lifetime = run_question("Which categories generated the highest revenue?")
+    assert "analytics.product_metrics" in res_cat_lifetime["sql"], "Lifetime category ranking must use analytics.product_metrics"
+    assert "GROUP BY category_name_english" in res_cat_lifetime["sql"], "Must group by category_name_english"
+    assert res_cat_lifetime["columns"] == ["category_name_english", "total_revenue"], "Columns must be category-level"
+    assert "product_id" not in res_cat_lifetime["columns"], "product_id must NOT be in columns"
+    assert len(res_cat_lifetime["rows"]) == 10, "Default limit must be 10"
+    assert res_cat_lifetime["rows"][0][0] == "health_beauty", f"Expected top category health_beauty, got {res_cat_lifetime['rows'][0][0]}"
+    assert float(res_cat_lifetime["rows"][0][1]) == 1258681.34, f"Expected 1258681.34, got {res_cat_lifetime['rows'][0][1]}"
+
+    # Year-constrained category revenue ranking (2017)
+    res_cat_2017 = run_question("Which categories generated the highest revenue in 2017?")
+    assert "core.fact_order_item oi" in res_cat_2017["sql"], "Year-constrained category query must use core.fact_order_item"
+    assert "core.dim_product p" in res_cat_2017["sql"], "Must join core.dim_product"
+    assert "WHERE EXTRACT(YEAR FROM o.purchase_timestamp) = 2017" in res_cat_2017["sql"], "Must filter by purchase timestamp year"
+    assert res_cat_2017["columns"] == ["category_name_english", "total_revenue"], "Columns must be category-level"
+    assert "product_id" not in res_cat_2017["columns"], "product_id must NOT be in columns"
+    assert len(res_cat_2017["rows"]) == 10, "Default limit must be 10"
+    assert res_cat_2017["rows"][0][0] == "bed_bath_table", f"Expected top 2017 category bed_bath_table, got {res_cat_2017['rows'][0][0]}"
+    assert float(res_cat_2017["rows"][0][1]) == 498440.43, f"Expected 498440.43, got {res_cat_2017['rows'][0][1]}"
+
+    # Custom limit (top 5 categories)
+    res_cat_top5 = run_question("What are the top 5 categories by revenue?")
+    assert res_cat_top5["columns"] == ["category_name_english", "total_revenue"]
+    assert "product_id" not in res_cat_top5["columns"]
+    assert len(res_cat_top5["rows"]) == 5, "Limit must be 5"
+    assert res_cat_top5["rows"][0][0] == "health_beauty"
+
+    # Custom limit for year-constrained question (top 3 categories in 2017)
+    res_cat_top3_2017 = run_question("What were the top 3 categories by revenue in 2017?")
+    assert res_cat_top3_2017["columns"] == ["category_name_english", "total_revenue"]
+    assert "product_id" not in res_cat_top3_2017["columns"]
+    assert len(res_cat_top3_2017["rows"]) == 3, "Limit must be 3"
+    assert res_cat_top3_2017["rows"][0][0] == "bed_bath_table"
 
     print("\nALL QUERY PIPELINE TESTS AND ASSERTIONS PASSED SUCCESSFULLY!")
 

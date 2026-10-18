@@ -196,6 +196,7 @@ class AnalyticalPlanner:
         time_period = analysis["time_period"]
         filters = analysis["filters"]
         limit = analysis.get("limit")
+        target_entity = analysis.get("target_entity")
 
         source_tables = self.select_source_tables(
             metrics=metrics,
@@ -225,6 +226,7 @@ class AnalyticalPlanner:
         return {
             "question": question,
             "intent": intent,
+            "target_entity": target_entity,
             "metrics": metrics,
             "dimensions": dimensions,
             "time_period": time_period,
