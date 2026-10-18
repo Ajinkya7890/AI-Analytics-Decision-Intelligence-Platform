@@ -1190,6 +1190,33 @@ def generate_seller_revenue_comparison_sql(
 
     metric = "Revenue"
     dimension = "Seller"
+
+    sorting = plan.get(
+        "sorting"
+    ) or {}
+
+    raw_direction = sorting.get(
+        "direction",
+        "DESC"
+    )
+
+    direction = "ASC" if str(raw_direction).upper() == "ASC" else "DESC"
+
+    limit = sorting.get(
+        "limit",
+        10
+    )
+
+    if limit is None:
+        limit = 10
+    else:
+        try:
+            limit = int(limit)
+            if limit <= 0:
+                limit = 10
+        except (ValueError, TypeError):
+            limit = 10
+
     time_period = plan.get(
         "time_period"
     )
@@ -1213,8 +1240,8 @@ JOIN core.dim_seller s
     ON oi.seller_key = s.seller_key
 WHERE {year_filter}
 GROUP BY s.seller_id, s.city, s.state
-ORDER BY total_revenue DESC
-LIMIT 10;
+ORDER BY total_revenue {direction}
+LIMIT {limit};
 """.strip()
 
     source_table = select_compatible_source_table(
@@ -1257,9 +1284,10 @@ SELECT
     {select_clause},
     {metric_column} AS total_revenue
 FROM {source_table}
-ORDER BY total_revenue DESC
-LIMIT 10;
+ORDER BY total_revenue {direction}
+LIMIT {limit};
 """.strip()
+
 
 
 def generate_sql(

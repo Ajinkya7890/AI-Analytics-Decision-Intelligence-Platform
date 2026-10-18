@@ -231,12 +231,20 @@ def run_tests():
     seller_2016_cohort_row = [r for r in res_seller_rank_2017["rows"] if r[0] == "7e93a43ef30c4f03f38b393420bc753a"][0]
     assert float(seller_2016_cohort_row[3]) == 159389.13, f"Expected 2017 revenue 159389.13, got {seller_2016_cohort_row[3]}"
 
-    # Seller comparison for 2017
+    # Seller comparison for 2017 (default limit 10)
     res_seller_comp_2017 = run_question("Compare sellers by revenue in 2017")
     assert "WHERE EXTRACT(YEAR FROM o.purchase_timestamp) = 2017" in res_seller_comp_2017["sql"], "Seller comparison must filter by year"
     assert len(res_seller_comp_2017["rows"]) == 10, "Seller comparison must return rows"
     assert res_seller_comp_2017["columns"] == ["seller_id", "city", "state", "total_revenue"]
     assert float(res_seller_comp_2017["rows"][0][3]) == 181113.92
+
+    # Seller comparison with explicit limit 3 for 2017
+    res_seller_comp_top3_2017 = run_question("Compare the top 3 sellers by revenue in 2017")
+    assert "WHERE EXTRACT(YEAR FROM o.purchase_timestamp) = 2017" in res_seller_comp_top3_2017["sql"]
+    assert "LIMIT 3;" in res_seller_comp_top3_2017["sql"]
+    assert len(res_seller_comp_top3_2017["rows"]) == 3
+    assert res_seller_comp_top3_2017["rows"][0][0] == "53243585a1d6dc2643021fd1853d8905"
+    assert float(res_seller_comp_top3_2017["rows"][0][3]) == 181113.92
 
     # 8. Unconstrained rankings preserve behavior using existing analytical tables without WHERE filter
     res_prod_rank_unconstrained = run_question("Which products generated the highest revenue?")
@@ -248,6 +256,20 @@ def run_tests():
     assert "analytics.seller_metrics" in res_seller_rank_unconstrained["sql"], "Unconstrained seller ranking must use analytics.seller_metrics"
     assert "WHERE" not in res_seller_rank_unconstrained["sql"], "Unconstrained seller ranking must not contain WHERE"
     assert res_seller_rank_unconstrained["rows"][0][0] == "4869f7a5dfa277a7dca6462dcf3b52b2", "Unconstrained returns lifetime top seller"
+
+    res_seller_comp_unconstrained = run_question("Compare sellers by revenue")
+    assert "analytics.seller_metrics" in res_seller_comp_unconstrained["sql"], "Unconstrained seller comparison must use analytics.seller_metrics"
+    assert "WHERE" not in res_seller_comp_unconstrained["sql"], "Unconstrained seller comparison must not contain WHERE"
+    assert len(res_seller_comp_unconstrained["rows"]) == 10, "Unconstrained seller comparison must return 10 rows"
+    assert res_seller_comp_unconstrained["rows"][0][0] == "4869f7a5dfa277a7dca6462dcf3b52b2", "Unconstrained seller comparison returns lifetime top seller"
+
+    # Seller comparison with explicit limit 5 unconstrained
+    res_seller_comp_top5 = run_question("Compare top 5 sellers by revenue")
+    assert "analytics.seller_metrics" in res_seller_comp_top5["sql"], "Unconstrained seller comparison must use analytics.seller_metrics"
+    assert "WHERE" not in res_seller_comp_top5["sql"], "Unconstrained seller comparison must not contain WHERE"
+    assert "LIMIT 5;" in res_seller_comp_top5["sql"], "Unconstrained seller comparison must limit to 5"
+    assert len(res_seller_comp_top5["rows"]) == 5, "Unconstrained seller comparison must return 5 rows"
+    assert res_seller_comp_top5["rows"][0][0] == "4869f7a5dfa277a7dca6462dcf3b52b2", "Unconstrained seller comparison returns lifetime top seller"
 
     print("\nALL QUERY PIPELINE TESTS AND ASSERTIONS PASSED SUCCESSFULLY!")
 

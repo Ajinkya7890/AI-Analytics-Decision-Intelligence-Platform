@@ -159,16 +159,17 @@ class AnalyticalPlanner:
         return None
 
     @staticmethod
-    def determine_sorting(intent):
+    def determine_sorting(intent, limit=None):
         """
         Determine sorting requirements for the analytical
         operation.
         """
 
-        if intent == "ranking":
+        if intent in ("ranking", "comparison"):
+            resolved_limit = limit if (limit and limit > 0) else 10
             return {
                 "direction": "DESC",
-                "limit": 10
+                "limit": resolved_limit
             }
 
         if intent == "trend_analysis":
@@ -194,6 +195,7 @@ class AnalyticalPlanner:
         intent = analysis["intent"]
         time_period = analysis["time_period"]
         filters = analysis["filters"]
+        limit = analysis.get("limit")
 
         source_tables = self.select_source_tables(
             metrics=metrics,
@@ -216,7 +218,8 @@ class AnalyticalPlanner:
         )
 
         sorting = self.determine_sorting(
-            intent=intent
+            intent=intent,
+            limit=limit
         )
 
         return {

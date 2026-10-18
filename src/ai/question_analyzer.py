@@ -376,6 +376,41 @@ def detect_time_period(
     return None
 
 
+def detect_limit(
+    question
+):
+    """
+    Detect explicit ranking or comparison limit in the question.
+    Examples: 'top 5', 'the top 3', 'top 10'.
+    """
+
+    match = re.search(
+        r"\b(?:top|highest|best|bottom|worst|lowest)[\s-]+(\d+)\b",
+        question,
+        re.IGNORECASE
+    )
+
+    if match:
+        limit = int(match.group(1))
+        if limit > 0:
+            return limit
+
+    word_match = re.search(
+        r"\b(?:top|highest|best|bottom|worst|lowest)[\s-]+(one|two|three|four|five|six|seven|eight|nine|ten)\b",
+        question,
+        re.IGNORECASE
+    )
+
+    if word_match:
+        word_map = {
+            "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+            "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10
+        }
+        return word_map.get(word_match.group(1).lower())
+
+    return None
+
+
 def analyze_question(
     question
 ):
@@ -417,6 +452,10 @@ def analyze_question(
         "analysis_type": analysis_type,
 
         "time_period": detect_time_period(
+            question
+        ),
+
+        "limit": detect_limit(
             question
         ),
 
